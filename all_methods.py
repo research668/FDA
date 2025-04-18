@@ -300,7 +300,7 @@ def DAC(ols_models,saa_decision,upper_ratio,lower_ratio,X_hats, y_hats,cluster_n
         
     return DAC
 
-#FDA tree
+#FDA （linear + random forest）
 def shrunken_non_linear(X_hats,y_hats,saa_decision,max_depth,cv = 5,alphas = [0.05*i for i in range(20)]):
     K = len(X_hats)
     f = X_hats[0].shape[1]
@@ -371,86 +371,77 @@ def shrunken_non_linear(X_hats,y_hats,saa_decision,max_depth,cv = 5,alphas = [0.
     # # rf = random_forest(X_hats,y_hats,saa_decision)
     return alpha_best
     # #splict the all data
-    # X_train = {}
-    # y_train = {}
-    # for k in selected_list:
-    #     X_train[k] = [X_hats[k][0:-1,:],X_hats[k][-1:,:]]
-    #     y_train[k] = [y_hats[k][0:-1],y_hats[k][-1:]]
-    
-    # xgboost_dict = {}
-    # total_data = []
-    # total_label = []
-    # for k in selected_list:
-    #     total_data.append(X_train[k][0])
-    #     total_label.append(y_train[k][0])
-    #     train_data = X_train[k][0]
-    #     train_label = y_train[k][0]
 
-    #     #train xgboost
-    #     #bst = xgb.XGBRegressor(tree_method="hist")
-    #     #bst.fit(train_data, train_label)
-    #     bst = sm.OLS(train_label,train_data).fit()
-    #     xgboost_dict[k] = bst
-    
-    # #train the random forest
-    # total_data = np.concatenate(total_data,axis=0)
-    # total_label = np.concatenate(total_label,axis=0)
-    # rf = RandomForestRegressor(n_estimators= 20, max_depth = 2).fit(total_data,total_label)
-    
-    # feature1 = []
-    # feature2 = []
-    # label = []
-    # for k in selected_list:
-    #      feature1 += list(xgboost_dict[k].predict(X_train[k][1].reshape(-1,f)))
-    #      feature2 += list(rf.predict(X_train[k][1].reshape(-1,f)))
-    #      label += list(list(y_train[k][1]))
-    # feature1 = np.maximum(np.array(feature1),0)
-    # feature2 = np.maximum(np.array(feature2),0)
-    # # data = np.ones((feature1.shape[0],2))
-    # # data[:,0] = feature1
-    # # data[:,1] = feature2
-    # label = np.array(label)
-    # alpha_best = np.sum((label - feature2)*(feature1 - feature2))/np.sum((feature1 - feature2)**2)
-    # residual = np.mean((label - alpha_best*feature1 - (1-alpha_best)*feature2))
-    # feature = np.array([[feature1[i],feature2[i]] for i in range(len(feature1))])
-    # label = np.array(label)
-    
-    #model = RidgeCV(alphas = [0.001,0.01,0.1,1,10],cv = 3).fit(data,label)
-    #model = sm.OLS(label, data).fit()
+#FDA (SAA + linear)
+def cv_saa_ols(X_hats,y_hats,saa_decision,cv = 5, alphas = [0.05*i for i in range(20)]):
+    K = len(X_hats)
+    f = X_hats[0].shape[1]
+    selected_list = []
+    for k in range(K):
+        if saa_decision[k] != -1:
+            selected_list.append(k)
 
-    #return min(max(alpha_best,0),1)
+    X_train = {}
+    y_train = {}
+    for k in selected_list:
+        length = X_hats[k].shape[0]
+        random_set = np.random.choice(range(length),size = 5,replace=False)
+        #random_set = [length - 1]
+        X_train[k] = []
+        y_train[k] = []
+        for i in random_set:
+            list1 = [j for j in range(length) if j != i]
+            X_train[k].append([X_hats[k][list1,:],X_hats[k][i,:]])
+            y_train[k].append([y_hats[k][list1],y_hats[k][i]])
+    models = {}
+    for i in range(cv):
+        total_data = []
+        total_label = []
 
-                         
+        test_data_list = {}
+        xgboost_dict = {}
+        for k in selected_list:
+            data = X_train[k][i][0]
+            label = y_train[k][i][0]
+            total_data.append(data)
+            total_label.append(label)
 
-    # alphas_dict = {}
-    # for alpha in alphas:
-    #     #test the alpha performance
-    #     y_true = []
-    #     y_pred = []
-    #     for k in selected_list:
-    #         pred = alpha*xgboost_dict[k].predict(X_train[k][1].reshape(-1,f)) + (1-alpha)*rf.predict(X_train[k][1].reshape(-1,f))
-    #         y_true += list(y_train[k][1])
-    #         y_pred += list(pred)
-    #     y_true = np.array(y_true)
-    #     y_pred = np.array(y_pred)
-    #     # print(test_performance)
-    #     alphas_dict[alpha] = np.mean((y_pred - y_true)**2)
-    # # tasks = []
-    # # for alpha in alphas:
-    # #     tasks.append([X_train,y_train,selected_list,alpha,f])
-    # # pool = multiprocessing.Pool(processes = 8)
-    # # results = pool.starmap(kernel,tasks)
+            test_data = X_train[k][i][1]
+            test_label = y_train[k][i][1]
 
-    # # for j in results:
-    # #     alphas_dict[j[0]] = j[1]
+            test_data_list[k] = [test_data,test_label]
 
-    #a = sorted(alphas_dict.items(), key=lambda x: x[1])
+            bst = np.mean(label)
+            xgboost_dict[k] = bst
+        total_data = np.concatenate(total_data,axis=0)
+        total_label = np.concatenate(total_label,axis=0)
+        rf = sm.OLS(total_label, total_data).fit()
+        #rf = RandomForestRegressor(n_estimators= 20, max_depth = max_depth,max_features = 'sqrt').fit(total_data,total_label)
+        pred_ols = []
+        pred_rf = []
+        true = []
+        for k in selected_list:
+            data = test_data_list[k][0]
+            label = test_data_list[k][1]
+            pred_ols.append(max(xgboost_dict[k],0))
+            pred_rf.append(max(rf.predict(data.reshape(-1,f))[0],0))
+            true.append(label)
+        models[i] = [pred_ols,pred_rf,true]
+    alphas_dict = {}
+    for alpha in alphas:
+        #test the alpha performance
+        test_perfomance = 0
+        for i in range(cv):
+            y_pred = alpha*np.array(models[i][0]) + (1-alpha)*np.array(models[i][1])
+            y_true = np.array(models[i][2])
+            test_perfomance += np.mean((y_pred - y_true)**2)
+        alphas_dict[alpha] = test_perfomance/cv
+    a = sorted(alphas_dict.items(), key=lambda x: x[1])
     #print(a)
-    #alpha_best = a[0][0]
+    alpha_best = a[0][0]
+    return alpha_best
 
-    # # xgoost_dict = decentralised_Xgboost(X_hats,y_hats,saa_decision)
-    # # rf = random_forest(X_hats,y_hats,saa_decision)
-    #return alpha_best
+
 
 #create the decision and FDA Linear
 def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
