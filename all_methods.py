@@ -507,6 +507,7 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
 
             denominator += (x_k.T @ (beta_diff @ beta_diff.T) @ x_k)[0,0]
     alpha_hat = numerator / denominator
+    alpha_hat = max(alpha_hat,0)
     
     s10 = datetime.datetime.now()
 
