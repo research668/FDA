@@ -8,3 +8,5 @@ This repository shows how combining different models, trained on various levels 
 ## Code in FDA_prediction
 1. **all_methods.py**:  This Python file contains all the algorithm functions used by the main program. It includes our FDA (linear+linear), FDA (linear + random forest) and FDA (SAA + linear) methods, along with other benchmark algorithms like Decoupled OLS, Shared OLS, DAC, Shrunken SAA, PAB linear, random forest and random forest with product index.
 2. **main.ipynb**: This is the main Jupyter Notebook that runs the different algorithms, calculates costs, and tracks runtime.
+
+## Code in FDA_decision
