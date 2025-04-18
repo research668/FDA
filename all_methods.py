@@ -493,6 +493,9 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
 
     s9 = datetime.datetime.now()
 
+    #FDA alpha for SAA + linear
+    alpha_saa = cv_saa_ols(X_hats,y_hats,saa_decision)
+
     # Calculate the numerator and denominator for \hat{\alpha} of linear FDA
     numerator = 0
     denominator = 0
@@ -520,6 +523,7 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
     PAB_linear_decision = np.zeros(K)
     shrunken_non_linear_decision = np.zeros(K)
     PAB_tree_decision = np.zeros(K)
+    saa_ols_decision = np.zeros(K)
 
     
     for i in range(K):
@@ -533,6 +537,7 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
             PAB_linear_decision[i] = max(PAB_para @ Xs[i],0)
             shrunken_non_linear_decision[i] = max(alpha_non_linear*ols_decision[i]+(1-alpha_non_linear)*rf_decision[i],0)
             PAB_tree_decision[i] = max(PAB_para_tree.predict(xgb.DMatrix(Xs[i].reshape(1,-1)))[0],0)
+            saa_ols_decision[i] = alpha_saa*np.mean(y_hats[i]) + (1-alpha_saa)*prior_decision[i]
         else:
             ols_decision[i] = ys[i]
             shrunken_decision[i] = ys[i]
@@ -543,6 +548,7 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
             PAB_linear_decision[i] = ys[i]
             shrunken_non_linear_decision[i] = ys[i]
             PAB_tree_decision[i] = ys[i]
+            saa_ols_decision[i] = ys[i]
         
     
     #Calculate the MSE out-of-sample cost
@@ -555,11 +561,12 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
     PAB_tree_cost = np.mean((PAB_tree_decision - ys)**2)
     prior_cost = np.mean((prior_decision - ys)**2)
     shrunken_cost = np.mean((shrunken_decision-ys)**2)
+    saa_ols_cost = np.mean((saa_ols_decision - ys)**2)
     
 
     cost_list = [ols_cost,gupta_cost,rf_cost,
                  shrunken_non_linear_cost,DAC_cost,PAB_linear_cost,
-                 PAB_tree_cost,prior_cost,shrunken_cost]
+                 PAB_tree_cost,prior_cost,shrunken_cost,saa_ols_cost]
     decision_list = [list(ols_decision),list(Gupta_decision),list(rf_decision),
                      list(shrunken_non_linear_decision),list(DAC_deicision),list(PAB_linear_decision),
                      list(PAB_tree_decision),list(prior_decision),list(shrunken_decision)]
