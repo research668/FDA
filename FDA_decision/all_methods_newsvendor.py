@@ -20,10 +20,219 @@ from sklearn.model_selection import KFold
 from scipy.spatial.distance import cdist
 import os
 import pandas as pd
+from numba import cuda
+from numba import jit
+from numba.cuda.random import create_xoroshiro128p_states,xoroshiro128p_normal_float64
 
 # suppress all warnings
 import warnings
 warnings.filterwarnings("ignore")
+
+#customized kenel for gpu calulation for shrunken saa
+@cuda.jit
+def get_decision(x_min,x_max,alpha_set,hist_data,h,b,anchor_set, x_decision,K):
+    i = cuda.blockIdx.x
+    j = cuda.threadIdx.x
+    
+    m = j
+    
+    n = i - int(i/K)*K
+    
+    i = int(i/K)
+    
+    data = hist_data[i]
+    alpha = alpha_set[n]
+    
+    
+    x1 = x_min
+    x2 = x_max
+    
+    x =  x1
+    cost1 = 0
+    for k in range(data.shape[0]):
+        if data[k] != 0 and  k != m:
+            cost1 = cost1 + h*max(x-data[k],0) + b*max(data[k]-x,0)
+    cost2 = 0
+    for k in anchor_set:
+        cost2 = cost2 + h*max(x-k,0) + b*max(k-x,0)
+    cost_total1 = cost1 +  alpha*cost2/anchor_set.shape[0]
+
+    #x = x + 1
+    cost1 = 0
+    for k in range(data.shape[0]):
+        if data[k] != 0 and  k != m:
+            cost1 = cost1 + h*max(x + 1-data[k],0) + b*max(data[k]-x -1,0)
+    cost2 = 0
+    for k in anchor_set:
+        cost2 = cost2 + h*max(x+1-k,0) + b*max(k-x-1,0)
+    cost_total2 = cost1 +  alpha*cost2/anchor_set.shape[0] 
+    if cost_total2 - cost_total1 > 0:
+        x_decision[n,i,m] = x1
+    else:
+        x =  x2 - 1
+        cost1 = 0
+        for k in range(data.shape[0]):
+            if data[k] != 0 and  k != m:
+                cost1 = cost1 + h*max(x-data[k],0) + b*max(data[k]-x,0)
+        cost2 = 0
+        for k in anchor_set:
+            cost2 = cost2 + h*max(x-k,0) + b*max(k-x,0)
+        cost_total1 = cost1 +  alpha*cost2/anchor_set.shape[0]
+
+
+        cost1 = 0
+        for k in range(data.shape[0]):
+            if data[k] != 0 and  k != m:
+                cost1 = cost1 + h*max(x + 1-data[k],0) + b*max(data[k]-x -1,0)
+        cost2 = 0
+        for k in anchor_set:
+            cost2 = cost2 + h*max(x + 1-k,0) + b*max(k-x -1,0)
+        cost_total2 = cost1 +  alpha*cost2/anchor_set.shape[0]
+        if cost_total2 - cost_total1 < 0:
+             x_decision[n,i,m] = x2
+        else:
+            x = (x1+x2)/2
+            while x - x1 >= 1:
+                cost1 = 0
+                for k in range(data.shape[0]):
+                    if data[k] != 0 and k != m:
+                        cost1 = cost1 + h*max(x-data[k],0) + b*max(data[k]-x,0)
+                cost2 = 0
+                for k in anchor_set:
+                    cost2 = cost2 + h*max(x-k,0) + b*max(k-x,0)
+                cost_total1 = cost1 +  alpha*cost2/anchor_set.shape[0]
+
+                #x = x + 1
+                cost1 = 0
+                for k in range(data.shape[0]):
+                    if data[k] != 0 and k!= m:
+                        cost1 = cost1 + h*max(x+1-data[k],0) + b*max(data[k]-x-1,0)
+                cost2 = 0
+                for k in anchor_set:
+                    cost2 = cost2 + h*max(x+1-k,0) + b*max(k-x-1,0)
+                cost_total2 = cost1 +  alpha*cost2/anchor_set.shape[0]
+
+                if cost_total2-cost_total1 < 0:
+                    x1 = x
+                else:
+                    x2 = x
+                x = (x1+x2)/2
+            x_decision[n,i,m] = x
+
+
+
+
+def get_alpha_data_driven(his_data,alpha_set,h,b,anchor_set):
+    p_number = his_data.shape[0]
+    N = his_data.shape[1]
+    alpha_map = {}
+    x_decision = np.zeros((alpha_set.shape[0],p_number,N))
+    get_decision[p_number*alpha_set.shape[0],N](np.min(anchor_set),np.max(anchor_set),alpha_set,his_data,h,b,anchor_set, x_decision,alpha_set.shape[0])
+    cuda.synchronize()
+    cost1 = 0
+    for idx,alpha in enumerate(alpha_set):
+        x_temp = x_decision[idx]
+        
+        res = np.where(his_data == 0)
+        x_temp[res] = 0
+        cost1 = np.sum(h*np.maximum(x_temp - his_data,0) + b*np.maximum(his_data-x_temp,0))
+        alpha_map[alpha] = cost1/(his_data.shape[0]*his_data.shape[1] - his_data[res].shape[0])
+
+    return min(alpha_map, key = alpha_map.get)
+
+@cuda.jit
+def get_decision_oracle(x_min,x_max,alpha_set,hist_data,h,b,anchor_set,x_decision):
+    i = cuda.blockIdx.x
+    j = cuda.threadIdx.x
+    
+    alpha = alpha_set[j]
+    data = hist_data[i]
+    
+    x1 = x_min
+    x2 = x_max
+    
+    x =  x1
+    cost1 = 0
+    for k in range(data.shape[0]):
+        if data[k] != 0:
+            cost1 = cost1 + h*max(x-data[k],0) + b*max(data[k]-x,0)
+    cost2 = 0
+    for k in anchor_set:
+        cost2 = cost2 + h*max(x-k,0) + b*max(k-x,0)
+    cost_total1 = cost1 +  alpha*cost2/anchor_set.shape[0]
+
+    #x = x + 1
+    cost1 = 0
+    for k in range(data.shape[0]):
+        if data[k] != 0:
+            cost1 = cost1 + h*max(x + 1-data[k],0) + b*max(data[k]-x -1,0)
+    cost2 = 0
+    for k in anchor_set:
+        cost2 = cost2 + h*max(x+1-k,0) + b*max(k-x-1,0)
+    cost_total2 = cost1 +  alpha*cost2/anchor_set.shape[0] 
+    if cost_total2 - cost_total1 > 0:
+        x_decision[j,i] =  x1
+    else:
+        x =  x2 - 1
+        cost1 = 0
+        for k in range(data.shape[0]):
+            if data[k] != 0:
+                cost1 = cost1 + h*max(x-data[k],0) + b*max(data[k]-x,0)
+        cost2 = 0
+        for k in anchor_set:
+            cost2 = cost2 + h*max(x-k,0) + b*max(k-x,0)
+        cost_total1 = cost1 +  alpha*cost2/anchor_set.shape[0]
+
+
+        cost1 = 0
+        for k in range(data.shape[0]):
+            if data[k] != 0:
+                cost1 = cost1 + h*max(x + 1-data[k],0) + b*max(data[k]-x -1,0)
+        cost2 = 0
+        for k in anchor_set:
+            cost2 = cost2 + h*max(x + 1-k,0) + b*max(k-x -1,0)
+        cost_total2 = cost1 +  alpha*cost2/anchor_set.shape[0]
+        if cost_total2 - cost_total1 < 0:
+            x_decision[j,i] = x2
+        else:
+            x = (x1+x2)/2
+            while x - x1 >= 1:
+                cost1 = 0
+                for k in range(data.shape[0]):
+                    if data[k] != 0:
+                        cost1 = cost1 + h*max(x-data[k],0) + b*max(data[k]-x,0)
+                cost2 = 0
+                for k in anchor_set:
+                    cost2 = cost2 + h*max(x-k,0) + b*max(k-x,0)
+                cost_total1 = cost1 +  alpha*cost2/anchor_set.shape[0]
+
+                #x = x + 1
+                cost1 = 0
+                for k in range(data.shape[0]):
+                    if data[k] != 0:
+                        cost1 = cost1 + h*max(x+1-data[k],0) + b*max(data[k]-x-1,0)
+                cost2 = 0
+                for k in anchor_set:
+                    cost2 = cost2 + h*max(x+1-k,0) + b*max(k-x-1,0)
+                cost_total2 = cost1 +  alpha*cost2/anchor_set.shape[0]
+                
+                if cost_total2-cost_total1 < 0:
+                    x1 = x
+                else:
+                    x2 = x
+                x = (x1+x2)/2
+            x_decision[j,i] = x
+def get_alpha_oracle(his_data,alpha_set,h,b,anchor_set):
+    p_number = his_data.shape[0]
+    N = his_data.shape[1]
+    alpha_map = {}
+    #for alpha in alpha_set:
+        #print(alpha)
+    x_decision_map = np.zeros((alpha_set.shape[0],p_number))
+    get_decision_oracle[p_number,alpha_set.shape[0]](np.min(anchor_set),np.max(anchor_set),alpha_set,his_data,h,b,anchor_set,x_decision_map)
+    cuda.synchronize()
+    
+    return x_decision_map
 
 
 def get_decision1(x,X,Y,h,b):
@@ -361,7 +570,6 @@ def pooled_KO(X_train, d_train, X_test,  h,b,selected_list):
     K = len(X_train)
     decision_array = np.zeros(K)
 
-    tasks = []
     data = []
     label = []
     for k in selected_list:
@@ -431,6 +639,37 @@ def decoupled_KO(X_train, d_train, X_test,  h,b,selected_list):
 
     return decision_array
 
+#Shrunken saa
+def shrunken_saa(y_PAB,saa_decision,h,b):
+    warnings.filterwarnings('ignore')
+    K = y_PAB.shape[0]
+    selected_list = []
+    for k in range(K):
+        if saa_decision[k] != -1:
+            selected_list.append(k)
+    
+
+    hist_data = []
+    anchor_set = []
+
+    for i in selected_list:
+        temp_list = list(y_PAB[i])
+        while 0 in temp_list:
+            temp_list.remove(0)
+        hist_data.append(temp_list)
+        anchor_set = anchor_set + temp_list
+    anchor_set = np.array(anchor_set)
+    alpha_set = np.array([0.1*i for i in range(0,201)])
+
+    decision = np.zeros(K)
+    
+    x_decision_map = get_alpha_oracle(y_PAB[selected_list],alpha_set,h,b,anchor_set)
+    alpha_gupta_driven = get_alpha_data_driven(y_PAB[selected_list],alpha_set,h,b,anchor_set)
+    index = list(alpha_set).index(alpha_gupta_driven)
+    decision[selected_list] = x_decision_map[index,:]
+    
+    return decision
+
 #create the decision and FDA Linear
 def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB,h,b,data_size,index):
     Xs = np.array(Xs)
@@ -452,7 +691,7 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB,h,b,data_size,index):
     alpha_hat = cross_validation(X_hats, y_hats,saa_decision,h,b)
     
     
-    Gupta_decision = np.zeros(K)
+    Gupta_decision = shrunken_saa(y_PAB,saa_decision,h,b)
     #Gupta_decision = Gupta(saa_decision, y_hats)
     
  
@@ -515,6 +754,6 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB,h,b,data_size,index):
     
 
  
-    cost_list = [shrunken_cost,shrunken_non_linear_cost,shrunken_saa_linear_cost,pooled_ko_cost,decoupled_ko_cost]
+    cost_list = [shrunken_cost,shrunken_non_linear_cost,shrunken_saa_linear_cost,pooled_ko_cost,decoupled_ko_cost,gupta_cost ]
     return cost_list
 
