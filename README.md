@@ -10,3 +10,5 @@ This repository shows how combining different models, trained on various levels 
 2. **main.ipynb**: This is the main Jupyter Notebook that runs the different algorithms, calculates costs, and tracks runtime.
 
 ## Code in FDA_decision
+1. **all_methods_newsvendor.py**:  This Python file contains all the algorithm functions used by the main program. It includes our FDA (linear+linear), FDA (linear + random forest) and FDA (SAA + linear) methods, along with other benchmark algorithms like Decoupled KO, Pooled KO OLS, DAC and Shrunken SAA.
+2. 2. **main_decision.ipynb**: This is the main Jupyter Notebook that runs the different algorithms, calculates costs.
