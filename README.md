@@ -1,5 +1,5 @@
 # FDA
-This repository shows how combining different models, trained on various levels of data, can lead to better predictions.
+This repository shows how combining different models, trained on various levels of data, can lead to better predictions and decisions.
 
 ## Data and data processing
 1. The **train.csv.zip** file contains the data used for comparing different methods. This dataset is from a Kaggle competition and comes from Rossmann, a European pharmacy chain in seven countries. You can also access the dataset [here](https://www.kaggle.com/competitions/rossmann-store-sales).
