@@ -19,6 +19,37 @@ import pandas as pd
 import warnings
 warnings.filterwarnings("ignore")
 
+def cv_kernel(data_array,label_array,max_depth):
+
+    # parameters setting
+    params = {
+        'objective': 'regression',
+        'boosting_type': 'rf',               
+        'max_depth': max_depth,                    
+        'feature_fraction': np.sqrt(data_array.shape[1])/data_array.shape[1],           
+        'bagging_fraction': 0.8,             
+        'bagging_freq': 1,                   
+        'verbose': -1
+    }
+
+
+    columns = ['f{}'.format(i) for i in range(data_array.shape[1])]
+    
+    test_performance = 0
+    for i in range(3):
+        X_train, X_test, y_train, y_test = train_test_split(data_array, label_array, test_size=0.2)
+        encoded_df = pd.DataFrame(data = X_train, columns = columns)
+        encoded_df[columns[-1]] = encoded_df[columns[-1]].astype('category') 
+        train_data = lgb.Dataset(encoded_df, label=y_train)
+        # model_temp = RandomForestRegressor(n_estimators= 20, max_depth = max_depth,max_features = 'sqrt').fit(X_train,y_train)
+        model_temp = lgb.train(params, train_data, num_boost_round=20)
+
+        encoded_df_test = pd.DataFrame(data = X_test, columns = columns)
+        encoded_df_test[columns[-1]] = encoded_df_test[columns[-1]].astype('category') 
+        # text_data = lgb.Dataset(encoded_df_test)
+        test_performance += np.mean((y_test - model_temp.predict(encoded_df_test))**2)
+    return test_performance/3
+    
 
 
 #Decouple OLS
@@ -67,6 +98,60 @@ def random_forest(X_hats,y_hats,saa_decision):
     a = sorted(cost.items(), key=lambda x: x[1])
     model = RandomForestRegressor(n_estimators= 20,max_depth= a[0][0], max_features = 'sqrt').fit(data_array,label_array)
     return model,a[0][0]
+
+
+
+#random forest with product index
+def random_forest_with_index(X_hats,y_hats,saa_decision):
+    K = len(X_hats)
+
+    #adding product index
+    data = []
+    label = []
+    index_array = np.zeros(K)
+    for k in range(K):
+        if saa_decision[k] != -1:
+            X_k = np.zeros((X_hats[k].shape[0],X_hats[k].shape[1] + 1))
+            X_k[:,0:-1] = X_hats[k]
+            X_k[:,-1] = k
+            y_k = y_hats[k]
+            data.append(X_k)
+            label += list(y_k)
+    data_array = np.concatenate(data,axis = 0)
+    label_array = np.array(label)
+   
+
+    cost = []
+   
+    for max_depth in [1 + 10*i for i in range(64)]:
+        cost.append(cv_kernel(data_array,label_array,max_depth))
+  
+
+    max_depth = cost.index(np.min(cost))*10 + 1
+
+    # paramters setting
+    params = {
+        'objective': 'regression',
+        'boosting_type': 'rf',               
+        'max_depth': max_depth,                     
+        'feature_fraction': np.sqrt(data_array.shape[1])/data_array.shape[1],          
+        'bagging_fraction': 0.8,             
+        'bagging_freq': 1,                   
+        'verbose': -1
+    }
+
+
+    columns = ['f{}'.format(i) for i in range(data_array.shape[1])]
+
+    
+    encoded_df = pd.DataFrame(data = data_array, columns = columns)
+    encoded_df[columns[-1]] = encoded_df[columns[-1]].astype('category') 
+    train_data = lgb.Dataset(encoded_df, label=label_array)
+       
+    model = lgb.train(params, train_data, num_boost_round=20)
+    return model
+
+
 
 #Shared OLS
 def centalised_ols(X_hats,y_hats,saa_decision):
@@ -496,6 +581,9 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
     #FDA alpha for SAA + linear
     alpha_saa = cv_saa_ols(X_hats,y_hats,saa_decision)
 
+    #rf with product index
+    rf_index =  random_forest_with_index(X_hats,y_hats,saa_decision)
+
     # Calculate the numerator and denominator for \hat{\alpha} of linear FDA
     numerator = 0
     denominator = 0
@@ -524,6 +612,7 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
     shrunken_non_linear_decision = np.zeros(K)
     PAB_tree_decision = np.zeros(K)
     saa_ols_decision = np.zeros(K)
+    rf_index_decision = np.zeros(K)
 
     
     for i in range(K):
@@ -538,6 +627,16 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
             shrunken_non_linear_decision[i] = max(alpha_non_linear*ols_decision[i]+(1-alpha_non_linear)*rf_decision[i],0)
             PAB_tree_decision[i] = max(PAB_para_tree.predict(xgb.DMatrix(Xs[i].reshape(1,-1)))[0],0)
             saa_ols_decision[i] = alpha_saa*np.mean(y_hats[i]) + (1-alpha_saa)*prior_decision[i]
+
+            #add product index for testing data
+            X_i = np.zeros((1,Xs[i].shape[0]+1))
+            X_i[:,0:-1] = Xs[i]
+            X_i[:,-1] = i
+            columns = ['f{}'.format(j) for j in range(X_i.shape[1])]
+
+            encoded_df_test = pd.DataFrame(data = X_i, columns = columns)
+            encoded_df_test[columns[-1]] = encoded_df_test[columns[-1]].astype('category') 
+            rf_index_decision[i] = max(rf.predict(encoded_df_test),0)
         else:
             ols_decision[i] = ys[i]
             shrunken_decision[i] = ys[i]
@@ -549,6 +648,7 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
             shrunken_non_linear_decision[i] = ys[i]
             PAB_tree_decision[i] = ys[i]
             saa_ols_decision[i] = ys[i]
+            rf_index_decision[i] = ys[i]
         
     
     #Calculate the MSE out-of-sample cost
@@ -562,11 +662,12 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
     prior_cost = np.mean((prior_decision - ys)**2)
     shrunken_cost = np.mean((shrunken_decision-ys)**2)
     saa_ols_cost = np.mean((saa_ols_decision - ys)**2)
+    rf_index_cost = np.mean((rf_index_decision - ys)**2)
     
 
     cost_list = [ols_cost,gupta_cost,rf_cost,
                  shrunken_non_linear_cost,DAC_cost,PAB_linear_cost,
-                 PAB_tree_cost,prior_cost,shrunken_cost,saa_ols_cost]
+                 PAB_tree_cost,prior_cost,shrunken_cost,saa_ols_cost,rf_index_cost]
     decision_list = [list(ols_decision),list(Gupta_decision),list(rf_decision),
                      list(shrunken_non_linear_decision),list(DAC_deicision),list(PAB_linear_decision),
                      list(PAB_tree_decision),list(prior_decision),list(shrunken_decision)]
