@@ -636,7 +636,7 @@ def main(X_hats,y_hats, Xs,ys,X_PAB,y_PAB):
 
             encoded_df_test = pd.DataFrame(data = X_i, columns = columns)
             encoded_df_test[columns[-1]] = encoded_df_test[columns[-1]].astype('category') 
-            rf_index_decision[i] = max(rf.predict(encoded_df_test),0)
+            rf_index_decision[i] = max(rf_index.predict(encoded_df_test),0)
         else:
             ols_decision[i] = ys[i]
             shrunken_decision[i] = ys[i]
